@@ -34,6 +34,8 @@ include_directories(${MODELBOX_COMMON_INFERENCE_INCLUDE})
 include_directories(${RKNPU2_INCLUDE_DIR})
 include_directories(${ROCKCHIP_MPP_INCLUDE})
 include_directories(${ROCKCHIP_RGA_INCLUDE})
+include_directories(${OpenCV_INCLUDE_DIRS})
+set(MODELBOX_UNIT_LINK_LIBRARY ${OpenCV_LIBS})
 
 set(MODELBOX_UNIT_SHARED libmodelbox-unit-${UNIT_DEVICE}-${UNIT_NAME}-shared)
 set(MODELBOX_UNIT_SOURCE_INCLUDE ${CMAKE_CURRENT_LIST_DIR})
@@ -54,6 +56,7 @@ target_link_libraries(${MODELBOX_UNIT_SHARED} ${RKNPU2_LIBRARY})
 target_link_libraries(${MODELBOX_UNIT_SHARED} ${LIBMODELBOX_SHARED})
 target_link_libraries(${MODELBOX_UNIT_SHARED} ${LIBMODELBOX_VIRTUALDRIVER_INFERENCE_SHARED})
 target_link_libraries(${MODELBOX_UNIT_SHARED} ${MODELBOX_COMMON_INFERENCE_LIBRARY})
+target_link_libraries(${MODELBOX_UNIT_SHARED} ${MODELBOX_UNIT_LINK_LIBRARY})
 
 set_target_properties(${MODELBOX_UNIT_SHARED} PROPERTIES OUTPUT_NAME "modelbox-unit-${UNIT_DEVICE}-${UNIT_NAME}")
 

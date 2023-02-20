@@ -105,6 +105,7 @@ modelbox::Status modelbox::RKNPU2Inference::GetModelAttr() {
     }
     inputs_type_[i] = rk_type;
     inputs_size_[i] = tmp_attr->n_elems * type_size_map[rk_type];
+    MBLOG_INFO << "------tmp_attr nelems " << tmp_attr->n_elems << " " << type_size_map[rk_type]  << " " << inputs_size_[i];
   }
 
   outputs_size_.resize(npu2model_output_list_.size());
@@ -124,6 +125,7 @@ modelbox::Status modelbox::RKNPU2Inference::GetModelAttr() {
       return {status, "output type convert failed."};
     }
     outputs_size_[i] = tmp_attr->n_elems * type_size_map[rk_type];
+    MBLOG_INFO << "------ouput tmp_attr nelems " << tmp_attr->n_elems << " " << type_size_map[rk_type]  << " " << outputs_size_[i];
   }
   return STATUS_SUCCESS;
 }
@@ -174,12 +176,20 @@ modelbox::Status modelbox::RKNPU2Inference::Build_Outputs(
   for (size_t i = 0; i < out_cnt; ++i) {
     auto &name = npu2model_output_list_[i];
     auto buffer_list = data_ctx->Output(name);
+    // MBLOG_INFO << "##data output name: " <<  name  << " output_size: " << outputs_size_[i];
 
     std::vector<size_t> shape({outputs_size_[i]});
     buffer_list->Build(shape, false);
     auto rknpu2_buffer = buffer_list->At(0);
+    // MBLOG_INFO << "##buffer size: " << rknpu2_buffer->GetBytes();
     auto *mpp_buf = (MppBuffer)(rknpu2_buffer->MutableData());
+    if (mpp_buf == nullptr) {
+      MBLOG_INFO << "-------------mpp_buf is nullptr";
+    }
+    
+    // MBLOG_INFO << "-------------mpp_buf is " << mpp_buf;
     auto *data_buf = (float *)mpp_buffer_get_ptr(mpp_buf);
+    // MBLOG_INFO << "-------------data_buf is " << data_buf;
 
     // convert outputs to float*
     rknpu2_outputs.push_back({.want_float = true,
@@ -187,6 +197,7 @@ modelbox::Status modelbox::RKNPU2Inference::Build_Outputs(
                               .index = (unsigned int)i,
                               .buf = data_buf,
                               .size = (uint32_t)outputs_size_[i]});
+    // MBLOG_INFO << "-------------output size " << rknpu2_outputs[i].size;
     rknpu2_buffer->Set("type", modelbox::ModelBoxDataType::MODELBOX_FLOAT);
     rknpu2_buffer->Set("shape", outputs_size_[i]);
   }
@@ -270,6 +281,10 @@ size_t modelbox::RKNPU2Inference::GetInputBuffer(
     std::shared_ptr<uint8_t> &input_buf,
     std::shared_ptr<modelbox::BufferList> &input_buf_list) {
   auto in_image = input_buf_list->At(0);
+  // MBLOG_INFO << "-------in image type " << (int)in_image->GetBufferType() << std::endl;
+  // cv::Mat infer_img = cv::Mat(cv::Size(416,416), CV_8UC3, in_image.get()); 
+  // cv::imwrite("infer-pre.jpg", infer_img);
+  // exit(0);
   auto input_params = std::make_shared<InferenceInputParams>();
   input_params->pix_fmt_ = "";
 
@@ -285,7 +300,9 @@ size_t modelbox::RKNPU2Inference::GetInputBuffer(
     input_params->in_width_ = in_image->GetBytes();
   }
 
-  if (input_buf_list->GetDevice()->GetType() == "rknpu") {
+  // MBLOG_INFO << "---------get input buffer by " << input_buf_list->GetDevice()->GetType();
+  // MBLOG_INFO << "-----" << in_image.get() ;
+  if (input_buf_list->GetDevice()->GetType() == "rknpu" || input_buf_list->GetDevice()->GetType() == "rockchip") {
     return CopyFromAlignMemory(input_buf_list, input_buf, input_params);
   }
   input_buf.reset((uint8_t *)input_buf_list->ConstData(), [](uint8_t *p) {});
@@ -321,19 +338,27 @@ modelbox::Status modelbox::RKNPU2Inference::Infer(
     one_input.index = i;
     one_input.buf = rknpu2_input_bufs[i].get();
     one_input.size = ret_size;
+    // std::cout << "========== input " << inputs_type_[i] << std::endl;
     if (one_input.size != inputs_size_[i]) {
       MBLOG_ERROR << "input size mismatch:(yours model) " << one_input.size
                   << " " << inputs_size_[i];
-      return modelbox::STATUS_FAULT;
+      // return modelbox::STATUS_FAULT;
     }
     one_input.pass_through = false;
+    inputs_type_[i] = 3;
     one_input.type = (rknn_tensor_type)inputs_type_[i];
     one_input.fmt = RKNN_TENSOR_NHWC;
     rknpu2_inputs.push_back(one_input);
   }
 
   std::lock_guard<std::mutex> lk(rknpu2_infer_mtx_);
+  // std::cout << "----------start rknn inputs set " << std::endl;
+  // std::cout << "---- rknpu2 size " << rknpu2_inputs.size() << " data: " << rknpu2_inputs.data() << std::endl;
+  
+  
   auto ret = rknn_inputs_set(ctx_, rknpu2_inputs.size(), rknpu2_inputs.data());
+
+  // std::cout << "----------end rknn inputs set " << std::endl;
   if (ret != RKNN_SUCC) {
     MBLOG_ERROR << "rknn_inputs_set fail: " << ret;
     return modelbox::STATUS_FAULT;
@@ -344,6 +369,7 @@ modelbox::Status modelbox::RKNPU2Inference::Infer(
     MBLOG_ERROR << "run error fail: " << ret;
     return modelbox::STATUS_FAULT;
   }
+  // MBLOG_INFO << "---------finished rknn run-----";
 
   return Build_Outputs(data_ctx);
 }

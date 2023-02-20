@@ -42,11 +42,13 @@ set_target_properties(${MODELBOX_UNIT_SHARED} PROPERTIES
         VERSION ${MODELBOX_VERSION_MAJOR}.${MODELBOX_VERSION_MINOR}.${MODELBOX_VERSION_PATCH}
 )
 
+set(MODELBOX_UNIT_LINK_LIBRARY ${OpenCV_LIBS})
 target_link_libraries(${MODELBOX_UNIT_SHARED} pthread)
 target_link_libraries(${MODELBOX_UNIT_SHARED} rt)
 target_link_libraries(${MODELBOX_UNIT_SHARED} dl)
 target_link_libraries(${MODELBOX_UNIT_SHARED} ${LIBMODELBOX_DEVICE_ROCKCHIP_SHARED})
 target_link_libraries(${MODELBOX_UNIT_SHARED} ${LIBMODELBOX_SHARED})
+target_link_libraries(${MODELBOX_UNIT_SHARED} ${MODELBOX_UNIT_LINK_LIBRARY})
 
 set_target_properties(${MODELBOX_UNIT_SHARED} PROPERTIES OUTPUT_NAME "modelbox-unit-${UNIT_DEVICE}-${UNIT_NAME}")
 
