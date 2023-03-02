@@ -163,6 +163,17 @@ modelbox::Status modelbox::RKNPU2Inference::Init(
                 << "the real model output num is " << rknpu2_io_num.n_output;
     return modelbox::STATUS_FAULT;
   }
+  auto device_type = RKNNDevs::Instance().GetDeviceType();
+  if (device_type == 3) {
+    auto core_id = config->GetUint64("core_mask_id", 0);
+    MBLOG_INFO << "------------device is 3588, set core mask is " << core_id;
+    auto ret = rknn_set_core_mask(ctx_, (rknn_core_mask)core_id);
+    if (ret != RKNN_SUCC) {
+      MBLOG_ERROR << "set core mask error";
+      return {modelbox::STATUS_FAULT, "set core mask error"};
+    }
+  }
+  
 
   return GetModelAttr();
 }
@@ -176,7 +187,14 @@ modelbox::Status modelbox::RKNPU2Inference::Build_Outputs(
   for (size_t i = 0; i < out_cnt; ++i) {
     auto &name = npu2model_output_list_[i];
     auto buffer_list = data_ctx->Output(name);
+    // MBLOG_INFO << "## buffer list size " << buffer_list.get()->Size();
     // MBLOG_INFO << "##data output name: " <<  name  << " output_size: " << outputs_size_[i];
+
+// ##data output name: output output_size: 8294400
+// ##data output name: output2 output_size: 2073600
+// ##data output name: output3 output_size: 518400
+
+
 
     std::vector<size_t> shape({outputs_size_[i]});
     buffer_list->Build(shape, false);
@@ -213,6 +231,12 @@ modelbox::Status modelbox::RKNPU2Inference::Build_Outputs(
     MBLOG_ERROR << "rknn get output error";
     return modelbox::STATUS_FAULT;
   }
+
+  // for (size_t i = 0; i < out_cnt; ++i) {
+  //     auto &name = npu2model_output_list_[i];
+  //     auto buffer_list = data_ctx->Output(name);
+  //     MBLOG_INFO << "### buffer list size " << buffer_list.get()->Size() << " data output name: " <<  name  << " output_size: " << outputs_size_[i];
+  // }
 
   return modelbox::STATUS_SUCCESS;
 }
