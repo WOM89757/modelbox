@@ -27,6 +27,7 @@
 #include <vector>
 #include <opencv2/opencv.hpp>
 
+#include <sys/time.h>
 #include "rknn_api.h"
 
 namespace modelbox {
@@ -49,6 +50,7 @@ class RKNPU2Inference {
       std::shared_ptr<uint8_t> &pdst,
       std::shared_ptr<modelbox::InferenceInputParams> &input_params);
   Status Build_Outputs(std::shared_ptr<modelbox::DataContext> &data_ctx);
+  Status Build_Batch_Outputs(std::shared_ptr<modelbox::DataContext> &data_ctx);
   Status GetModelAttr();
   Status LoadModel(const std::string &model_file,
                    const std::shared_ptr<modelbox::Drivers> &drivers_ptr,
@@ -56,6 +58,7 @@ class RKNPU2Inference {
   Status ConvertType(const std::string &type, rknn_tensor_type &rk_type);
 
   size_t batch_size_{1};
+  size_t real_batch;
   std::vector<size_t> outputs_size_;
   std::vector<size_t> inputs_size_;
   std::vector<int> inputs_type_;

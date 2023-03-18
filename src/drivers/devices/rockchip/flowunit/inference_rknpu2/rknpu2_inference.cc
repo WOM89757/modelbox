@@ -187,27 +187,16 @@ modelbox::Status modelbox::RKNPU2Inference::Build_Outputs(
   for (size_t i = 0; i < out_cnt; ++i) {
     auto &name = npu2model_output_list_[i];
     auto buffer_list = data_ctx->Output(name);
-    // MBLOG_INFO << "## buffer list size " << buffer_list.get()->Size();
-    // MBLOG_INFO << "##data output name: " <<  name  << " output_size: " << outputs_size_[i];
-
-// ##data output name: output output_size: 8294400
-// ##data output name: output2 output_size: 2073600
-// ##data output name: output3 output_size: 518400
-
-
 
     std::vector<size_t> shape({outputs_size_[i]});
     buffer_list->Build(shape, false);
     auto rknpu2_buffer = buffer_list->At(0);
-    // MBLOG_INFO << "##buffer size: " << rknpu2_buffer->GetBytes();
     auto *mpp_buf = (MppBuffer)(rknpu2_buffer->MutableData());
     if (mpp_buf == nullptr) {
       MBLOG_INFO << "-------------mpp_buf is nullptr";
     }
     
-    // MBLOG_INFO << "-------------mpp_buf is " << mpp_buf;
     auto *data_buf = (float *)mpp_buffer_get_ptr(mpp_buf);
-    // MBLOG_INFO << "-------------data_buf is " << data_buf;
 
     // convert outputs to float*
     rknpu2_outputs.push_back({.want_float = true,
@@ -215,7 +204,6 @@ modelbox::Status modelbox::RKNPU2Inference::Build_Outputs(
                               .index = (unsigned int)i,
                               .buf = data_buf,
                               .size = (uint32_t)outputs_size_[i]});
-    // MBLOG_INFO << "-------------output size " << rknpu2_outputs[i].size;
     rknpu2_buffer->Set("type", modelbox::ModelBoxDataType::MODELBOX_FLOAT);
     rknpu2_buffer->Set("shape", outputs_size_[i]);
   }
@@ -232,12 +220,71 @@ modelbox::Status modelbox::RKNPU2Inference::Build_Outputs(
     return modelbox::STATUS_FAULT;
   }
 
-  // for (size_t i = 0; i < out_cnt; ++i) {
-  //     auto &name = npu2model_output_list_[i];
-  //     auto buffer_list = data_ctx->Output(name);
-  //     MBLOG_INFO << "### buffer list size " << buffer_list.get()->Size() << " data output name: " <<  name  << " output_size: " << outputs_size_[i];
-  // }
+  return modelbox::STATUS_SUCCESS;
+}
 
+modelbox::Status modelbox::RKNPU2Inference::Build_Batch_Outputs(
+    std::shared_ptr<modelbox::DataContext> &data_ctx) {
+  auto out_cnt = npu2model_output_list_.size();
+  std::vector<rknn_output> rknpu2_outputs;
+  rknpu2_outputs.reserve(out_cnt);
+
+  for (size_t i = 0; i < out_cnt; ++i) {
+    uint32_t batch_iter_size = outputs_size_[i]/ this->batch_size_;
+    // MBLOG_INFO << "##data output name: " <<  name  << " output_size: " << outputs_size_[i];
+    // ##data output name: output output_size: 8294400
+    // ##data output name: output2 output_size: 2073600
+    // ##data output name: output3 output_size: 518400
+
+    rknpu2_outputs.push_back({.want_float = true,
+                          .is_prealloc = false,
+                          .index = (unsigned int)i,
+                          .size = batch_iter_size});
+  }
+  
+  auto ret = rknn_outputs_get(ctx_, out_cnt, rknpu2_outputs.data(), nullptr);
+  if (ret != RKNN_SUCC) {
+    MBLOG_ERROR << "rknn get output error";
+    return modelbox::STATUS_FAULT;
+  }
+
+  for (size_t i = 0; i < out_cnt; ++i) {
+    auto &name = npu2model_output_list_[i];
+    auto buffer_list = data_ctx->Output(name);
+
+    uint32_t batch_iter_size = outputs_size_[i]/ this->batch_size_;
+    uint32_t iter_size = batch_iter_size/sizeof(float);
+
+    // std::vector<size_t> shape({outputs_size_[i]});
+    std::vector<size_t> shape(real_batch, batch_iter_size);
+    buffer_list->Build(shape, false);
+    // MBLOG_INFO << "## buffer list size " << buffer_list.get()->Size();
+    float *buf_loc = (float*)rknpu2_outputs[i].buf;
+    for (size_t j = 0; j < buffer_list->Size(); j++) {
+      
+      auto rknpu2_buffer = buffer_list->At(j);
+      // MBLOG_INFO << "##buffer size: " << rknpu2_buffer->GetBytes();
+      auto *mpp_buf = (MppBuffer)(rknpu2_buffer->MutableData());
+      if (mpp_buf == nullptr) {
+        // MBLOG_INFO << "-------------mpp_buf is nullptr";
+      }
+      
+      // MBLOG_INFO << "-------------mpp_buf is " << mpp_buf;
+      auto *data_buf = (float *)mpp_buffer_get_ptr(mpp_buf);
+      // MBLOG_INFO << "-------------data_buf is " << data_buf;
+
+      // copy outputs to float*
+      memcpy(data_buf, buf_loc, batch_iter_size);
+      buf_loc += iter_size;
+
+      // MBLOG_INFO << "-------------output size " << rknpu2_outputs[i].size;
+      rknpu2_buffer->Set("type", modelbox::ModelBoxDataType::MODELBOX_FLOAT);
+      rknpu2_buffer->Set("shape", batch_iter_size);
+    }
+
+
+  }
+  rknn_outputs_release(ctx_, out_cnt, rknpu2_outputs.data());
   return modelbox::STATUS_SUCCESS;
 }
 
@@ -249,7 +296,7 @@ size_t modelbox::RKNPU2Inference::CopyFromAlignMemory(
   RgaSURF_FORMAT rga_fmt = RK_FORMAT_UNKNOWN;
   rga_fmt = modelbox::GetRGAFormat(input_params->pix_fmt_);
 
-  size_t input_total_size = batch_size_ * one_size;
+  size_t input_total_size = real_batch * one_size;
   if (rga_fmt == RK_FORMAT_YCbCr_420_SP || rga_fmt == RK_FORMAT_YCrCb_420_SP) {
     input_total_size = input_total_size * 3 / 2;
   } else {
@@ -258,7 +305,7 @@ size_t modelbox::RKNPU2Inference::CopyFromAlignMemory(
     }
   }
 
-  if ((batch_size_ == 1) &&
+  if ((real_batch == 1) &&
       ((input_params->in_width_ == input_params->in_wstride_ &&
         input_params->in_height_ == input_params->in_hstride_) ||
        (input_params->in_wstride_ == 0 && input_params->in_hstride_ == 0))) {
@@ -273,7 +320,7 @@ size_t modelbox::RKNPU2Inference::CopyFromAlignMemory(
              [](const uint8_t *p) { delete[] p; });
 
   uint8_t *pdst_buf = pdst.get();
-  for (size_t i = 0; i < batch_size_; i++) {
+  for (size_t i = 0; i < real_batch; i++) {
     auto in_image = input_buf_list->At(i);
     auto *mpp_buf = (MppBuffer)(in_image->ConstData());
     auto *cpu_buf = (uint8_t *)mpp_buffer_get_ptr(mpp_buf);
@@ -327,12 +374,23 @@ size_t modelbox::RKNPU2Inference::GetInputBuffer(
   // MBLOG_INFO << "---------get input buffer by " << input_buf_list->GetDevice()->GetType();
   // MBLOG_INFO << "-----" << in_image.get() ;
   if (input_buf_list->GetDevice()->GetType() == "rknpu" || input_buf_list->GetDevice()->GetType() == "rockchip") {
+    // MBLOG_INFO << "input bufer list type is " << input_buf_list->GetDevice()->GetType();
     return CopyFromAlignMemory(input_buf_list, input_buf, input_params);
   }
   input_buf.reset((uint8_t *)input_buf_list->ConstData(), [](uint8_t *p) {});
   return input_buf_list->GetBytes();
 }
 
+int64_t getCurrentTime()      
+    {    
+       struct timeval tv;    
+       gettimeofday(&tv, NULL);    
+       return tv.tv_sec * 1000 + tv.tv_usec / 1000;    
+    }  
+double timestamp_now_float() {
+        // return chrono::duration_cast<chrono::microseconds>(chrono::system_clock::now().time_since_epoch()).count() / 1000.0;
+        return getCurrentTime();
+    }
 modelbox::Status modelbox::RKNPU2Inference::Infer(
     std::shared_ptr<modelbox::DataContext> &data_ctx) {
   // 构造impl的输入
@@ -346,16 +404,17 @@ modelbox::Status modelbox::RKNPU2Inference::Infer(
   std::vector<std::shared_ptr<uint8_t>> rknpu2_input_bufs;
   rknpu2_input_bufs.resize(npu2model_input_list_.size());
 
+  // MBLOG_INFO << "-----npu2model input list size " << npu2model_input_list_.size();
   for (size_t i = 0; i < npu2model_input_list_.size(); i++) {
     auto inputs = data_ctx->Input(npu2model_input_list_[i]);
     rknn_input one_input;
-    size_t realBatch = inputs->Size();
-    if (realBatch != batch_size_) {
+    real_batch = inputs->Size();
+    if (real_batch != batch_size_) {
       auto msg = npu2model_input_list_[i] +
                  " batch mismatch:" + std::to_string(batch_size_) + " " +
-                 std::to_string(realBatch);
-      MBLOG_ERROR << msg;
-      return {STATUS_FAULT, msg};
+                 std::to_string(real_batch);
+      MBLOG_DEBUG << msg;
+      // return {STATUS_FAULT, msg};
     }
 
     size_t ret_size = GetInputBuffer(rknpu2_input_bufs[i], inputs);
@@ -364,22 +423,23 @@ modelbox::Status modelbox::RKNPU2Inference::Infer(
     one_input.size = ret_size;
     // std::cout << "========== input " << inputs_type_[i] << std::endl;
     if (one_input.size != inputs_size_[i]) {
-      MBLOG_ERROR << "input size mismatch:(yours model) " << one_input.size
+      MBLOG_DEBUG << "input size mismatch:(yours model) " << one_input.size
                   << " " << inputs_size_[i];
       // return modelbox::STATUS_FAULT;
     }
     one_input.pass_through = false;
-    inputs_type_[i] = 3;
+    // inputs_type_[i] = 3;
     one_input.type = (rknn_tensor_type)inputs_type_[i];
     one_input.fmt = RKNN_TENSOR_NHWC;
     rknpu2_inputs.push_back(one_input);
   }
 
   std::lock_guard<std::mutex> lk(rknpu2_infer_mtx_);
-  // std::cout << "----------start rknn inputs set " << std::endl;
-  // std::cout << "---- rknpu2 size " << rknpu2_inputs.size() << " data: " << rknpu2_inputs.data() << std::endl;
+  // MBLOG_INFO << "----------start rknn inputs set ";
+  // MBLOG_INFO << "---- rknpu2 size " << rknpu2_inputs.size() << " data: " << rknpu2_inputs.data();
   
   
+  // auto begin_timer = timestamp_now_float();
   auto ret = rknn_inputs_set(ctx_, rknpu2_inputs.size(), rknpu2_inputs.data());
 
   // std::cout << "----------end rknn inputs set " << std::endl;
@@ -394,8 +454,11 @@ modelbox::Status modelbox::RKNPU2Inference::Infer(
     return modelbox::STATUS_FAULT;
   }
   // MBLOG_INFO << "---------finished rknn run-----";
-
-  return Build_Outputs(data_ctx);
+  // float inference_time = (timestamp_now_float() - begin_timer);
+  // float inference_average_time = inference_time / real_batch ;
+  // MBLOG_INFO << "inference time: " << inference_time << " average time: " << inference_average_time; 
+  return Build_Batch_Outputs(data_ctx);
+  // return Build_Outputs(data_ctx);
 }
 
 modelbox::Status modelbox::RKNPU2Inference::Deinit() {
